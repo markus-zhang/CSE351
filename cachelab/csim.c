@@ -14,15 +14,9 @@ typedef struct cacheLine {
 } cacheLine;
 
 void cacheChunkOperation(
-    int64_t associativity, int64_t address, //int16_t bytes,
+    int64_t associativity, int64_t chunkStartAddress, //int16_t bytes,
     int64_t setBits, int64_t blockBits, cacheLine cache[][associativity] 
 );
-
-/*
-    TODO: implement the main function.
-    It makes chunks from address and bytes read and call cacheChunkOperation
-*/
-void run(int64_t address, int64_t bytes);
 
 int main(int argc, char* argv[])
 {
@@ -53,7 +47,7 @@ int main(int argc, char* argv[])
             break;
         case 's':
             printf("Bits for set selection: %d\n", atoi(optarg));
-            blockBits = atoi(optarg);
+            setBits = atoi(optarg);
             break;
         case 'E':
             printf("Associativity: %d\n", atoi(optarg));
@@ -61,7 +55,7 @@ int main(int argc, char* argv[])
             break;
         case 'b':
             printf("Bits for each block: %d\n", atoi(optarg));
-            setBits = atoi(optarg);
+            blockBits = atoi(optarg);
             break;
         default:
             fprintf(stderr, "Usage: %s [-hv] [-s nsetbits] [-E associativity] [-b blockbits] [-t tracefile]\n", argv[0]);
@@ -89,11 +83,66 @@ int main(int argc, char* argv[])
         }
     }
 
+    /*
+        Receives the starting address and the bytes to read,
+        calculates the starting address of each chunk,
+        and call cacheChunkOperation() for each chunk.
+
+        For example, if the blockSize is 256 bytes,
+        starting address is 0x50 (80 in dec) and reading in 1000 bytes,
+        this (from 80 to 1079) will range over 5 blocks:
+            0~255, 256~511, 512~767, 768~1023 and 1024~1279.
+        We need to run cacheChunkOperation five times.
+    */
+    /*
+    // Step 1: Test cold miss
+    int addressWalker = (int)(0x00602400 / blockSize) * blockSize;
+    while (addressWalker <= 0x00602400 + 1000) {
+        cacheChunkOperation(associativity, addressWalker, setBits, blockBits, cache);
+        addressWalker += blockSize;
+    }
+    printf("Cold miss test completed!\n");
+
+    // Step 2: Test hit
+    addressWalker = (int)(0x00602400 / blockSize) * blockSize;
+    while (addressWalker <= 0x00602400 + 1000) {
+        cacheChunkOperation(associativity, addressWalker, setBits, blockBits, cache);
+        addressWalker += blockSize;
+    }
+    printf("Hit test completed!\n");
+
+    // Step 3: Conviction hit
+    // Since E=2, needs to fill set first
+    addressWalker = (int)(0x0060A400 / blockSize) * blockSize;
+    while (addressWalker <= 0x0060A400 + 1000) {
+        cacheChunkOperation(associativity, addressWalker, setBits, blockBits, cache);
+        addressWalker += blockSize;
+    }
+    addressWalker = (int)(0x0060C400 / blockSize) * blockSize;
+    while (addressWalker <= 0x0060C400 + 1000) {
+        cacheChunkOperation(associativity, addressWalker, setBits, blockBits, cache);
+        addressWalker += blockSize;
+    }
+    printf("Conviction test completed!\n");
+    */
+    
+    // Read file by line
+    FILE* fp;
+    char line[16];
+
+    fp = fopen("../traces/long.trace");
+    if (fp == NULL) {
+        printf("File read failed!\n");
+        exit(EXIT_FAILURE);
+    }
+    // TODO: Implement read functionality
+    while (())
+
     // Test
-    cacheChunkOperation(
+    /* cacheChunkOperation(
         associativity, 0x00602400, //int16_t bytes,
         setBits, blockBits, cache
-    );
+    ); */
 
     // printSummary(0, 0, 0);
     return 0;
@@ -106,7 +155,7 @@ int main(int argc, char* argv[])
     down to 8 chunks, and cacheOperation only check one chunk each time.
 */
 void cacheChunkOperation(
-    int64_t associativity, int64_t address, //int16_t bytes,
+    int64_t associativity, int64_t chunkStartAddress, //int16_t bytes,
     int64_t setBits, int64_t blockBits, cacheLine cache[][associativity] 
 ) {
     /*
@@ -149,7 +198,7 @@ void cacheChunkOperation(
     int64_t tagMask = ~(setMask | blockMask);
 
     int64_t blockSize = pow(2, blockBits);
-    int64_t setSelected = (address & setMask) >> blockBits;
+    int64_t setSelected = (chunkStartAddress & setMask) >> blockBits;
 
     /*
         Three cases:
@@ -159,7 +208,7 @@ void cacheChunkOperation(
     */
     for (int i = 0; i < associativity; i++) {
         if (cache[setSelected][i].usage >= 1) {
-            if (cache[setSelected][i].tag == (address & tagMask)) {
+            if (cache[setSelected][i].tag == (chunkStartAddress & tagMask)) {
                 /*
                     If the set and tag both match and the usage flag is true,
                     then we have a hit. Remember we only need to check one chunk
@@ -167,7 +216,7 @@ void cacheChunkOperation(
                 */
                 printf(
                         "Hit! %X : %X is within %X and %X, set %d, line %d\n",
-                        address, address + blockSize - 1, 
+                        chunkStartAddress, chunkStartAddress + blockSize - 1, 
                         cache[setSelected][i].startAddress, cache[setSelected][i].startAddress + blockSize - 1,
                         setSelected, associativity
                 );
@@ -184,13 +233,13 @@ void cacheChunkOperation(
         if (cache[setSelected][j].usage == 0) {
             printf(
                 "Miss! %X : %X can be written into set %d, line %d as it's cold\n",
-                address, address + blockSize - 1, 
+                chunkStartAddress, chunkStartAddress + blockSize - 1, 
                 setSelected, j
             );
             // Write into said line
             cache[setSelected][j].usage = 1;
-            cache[setSelected][j].tag = address & tagMask;
-            cache[setSelected][j].startAddress = address;
+            cache[setSelected][j].tag = chunkStartAddress & tagMask;
+            cache[setSelected][j].startAddress = chunkStartAddress;
             return;
         }
     }
@@ -206,12 +255,12 @@ void cacheChunkOperation(
     }
     printf(
         "Miss-Convict! %X : %X can be written into set %d, line %d after conviction\n",
-        address, address + blockSize - 1, 
+        chunkStartAddress, chunkStartAddress + blockSize - 1, 
         setSelected, lineToConvict
     );
     // Write into said line
     cache[setSelected][lineToConvict].usage = 1;
-    cache[setSelected][lineToConvict].tag = address & tagMask;
-    cache[setSelected][lineToConvict].startAddress = address;
+    cache[setSelected][lineToConvict].tag = chunkStartAddress & tagMask;
+    cache[setSelected][lineToConvict].startAddress = chunkStartAddress;
     return;
 }
